@@ -1,0 +1,25 @@
+# Godot 4+ specific ignores
+# --- Godot 4 임시 파일 ---
+.godot/
+*.import
+export_preset.cfg
+
+# --- 가공된 바이너리 및 로그 ---
+*.log
+*.pck
+*.exe
+*.zip
+
+# --- macOS 시스템 파일 (맥 사용자 필수) ---
+.DS_Store
+
+# --- MCP / Node.js 관련 (라이브러리는 올리면 안됨) ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.env
+
+# --- Cursor 및 IDE 설정 ---
+.vscode/
+.history/
