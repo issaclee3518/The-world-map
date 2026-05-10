@@ -5,6 +5,8 @@ signal country_selected(country_name: String, iso_code: String)
 @export var geojson_path: String = "res://assets/data/ne_110m_admin_0_countries.geojson"
 @export var map_size: Vector2 = Vector2(3840.0, 1920.0) # equirectangular canvas
 
+@export var enable_interaction: bool = true
+
 @export var camera_path: NodePath
 @export var focus_duration: float = 0.25
 @export var click_zoom_multiplier: float = 1.7
@@ -54,11 +56,20 @@ var _camera: Camera2D
 var _focus_tween: Tween
 var _font: Font
 
+static var _CACHE: Dictionary = {}
+
 
 func _ready() -> void:
 	_camera = _resolve_camera()
 	_font = _resolve_font()
-	_load_countries()
+
+	var ck: String = _cache_key()
+	if _CACHE.has(ck):
+		_apply_cache(_CACHE[ck])
+	else:
+		_load_countries()
+		_CACHE[ck] = _make_cache()
+
 	queue_redraw()
 
 
@@ -121,13 +132,17 @@ func _load_countries() -> void:
 	_label_pos.clear()
 	_label_area.clear()
 
-	if _hit_root == null:
-		_hit_root = Node2D.new()
-		_hit_root.name = "CountryButtons"
-		add_child(_hit_root)
-	else:
-		for c in _hit_root.get_children():
-			c.queue_free()
+	if enable_interaction:
+		if _hit_root == null:
+			_hit_root = Node2D.new()
+			_hit_root.name = "CountryButtons"
+			add_child(_hit_root)
+		else:
+			for c in _hit_root.get_children():
+				c.queue_free()
+	elif _hit_root != null:
+		_hit_root.queue_free()
+		_hit_root = null
 
 	if FileAccess.file_exists(geojson_path):
 		var json_text: String = FileAccess.get_file_as_string(geojson_path)
@@ -214,7 +229,8 @@ func _apply_geojson_text(json_text: String) -> bool:
 		elif gtype == "MultiPolygon":
 			_add_multipolygon(country_name, coords, color, iso_code)
 
-	_build_country_buttons()
+	if enable_interaction:
+		_build_country_buttons()
 	_build_country_labels()
 	return true
 
@@ -338,6 +354,9 @@ func _resolve_font() -> Font:
 
 
 func _build_country_buttons() -> void:
+	if not enable_interaction:
+		return
+
 	var n: int = _polys.size()
 	_hovered.resize(n)
 	for i in range(n):
@@ -385,6 +404,8 @@ func _build_country_buttons() -> void:
 
 
 func _set_hover(i: int, is_on: bool) -> void:
+	if not enable_interaction:
+		return
 	if i < 0 or i >= _hovered.size():
 		return
 	if _hovered[i] == is_on:
@@ -397,6 +418,8 @@ func _set_hover(i: int, is_on: bool) -> void:
 
 
 func _focus_country(i: int) -> void:
+	if not enable_interaction:
+		return
 	if _camera == null:
 		_camera = _resolve_camera()
 		if _camera == null:
@@ -545,6 +568,40 @@ func _lonlat_to_xy(lon: float, lat: float) -> Vector2:
 	var x: float = (lon / 180.0) * (map_size.x * 0.5)
 	var y: float = (-lat / 90.0) * (map_size.y * 0.5)
 	return Vector2(x, y)
+
+
+func _cache_key() -> String:
+	# Include map_size so different canvases won't collide.
+	return "%s|%s|%s" % [geojson_path, map_size.x, map_size.y]
+
+
+func _make_cache() -> Dictionary:
+	return {
+		"polys": _polys,
+		"base_colors": _base_colors,
+		"poly_country": _poly_country,
+		"poly_iso": _poly_iso,
+		"label_countries": _label_countries,
+		"label_pos": _label_pos,
+		"label_area": _label_area,
+	}
+
+
+func _apply_cache(d: Dictionary) -> void:
+	# Copy references (PackedVector2Array is copy-on-write) — cheap for clones.
+	_polys = d.get("polys", [])
+	_base_colors = d.get("base_colors", [])
+	_colors = _base_colors.duplicate()
+	_poly_country = d.get("poly_country", [])
+	_poly_iso = d.get("poly_iso", [])
+	_label_countries = d.get("label_countries", [])
+	_label_pos = d.get("label_pos", [])
+	_label_area = d.get("label_area", [])
+
+	# Ensure interaction state is consistent for this instance.
+	if not enable_interaction and _hit_root != null:
+		_hit_root.queue_free()
+		_hit_root = null
 
 
 func _color_for_name(country_name: String) -> Color:

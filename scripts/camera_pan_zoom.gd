@@ -5,11 +5,19 @@ extends Camera2D
 @export var zoom_step: float = 0.10
 @export var pan_speed: float = 900.0
 
+@export var map_node_path: NodePath = NodePath("../MapRoot/WorldMap")
+@export var fit_map_height_in_view: bool = true
+
 @export var drag_button: MouseButton = MOUSE_BUTTON_RIGHT
 @export var also_allow_middle_mouse: bool = true
 
 var _dragging: bool = false
 var _last_mouse_pos: Vector2 = Vector2.ZERO
+
+
+func _ready() -> void:
+	if fit_map_height_in_view:
+		_apply_fit_zoom_min()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -30,6 +38,9 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _process(delta: float) -> void:
+	if fit_map_height_in_view:
+		_apply_fit_zoom_min()
+
 	var x: float = float(Input.get_axis("ui_left", "ui_right"))
 	var y: float = float(Input.get_axis("ui_up", "ui_down"))
 	var dir: Vector2 = Vector2(x, y)
@@ -48,3 +59,29 @@ func _apply_zoom(multiplier: float, _screen_pos: Vector2) -> void:
 	zoom = Vector2.ONE * target
 	var after := get_global_mouse_position()
 	global_position += (before - after)
+
+
+func _apply_fit_zoom_min() -> void:
+	var vp := get_viewport()
+	if vp == null:
+		return
+	var map_node: Node = get_node_or_null(map_node_path)
+	if map_node == null:
+		return
+	var ms: Variant = map_node.get("map_size")
+	if typeof(ms) != TYPE_VECTOR2:
+		return
+
+	var map_h: float = float(ms.y)
+	if map_h <= 0.0:
+		return
+
+	var screen_h: float = vp.get_visible_rect().size.y
+	if screen_h <= 0.0:
+		return
+
+	# Visible world height = screen_h / zoom. To show exactly map_h, need zoom = screen_h / map_h.
+	var fit: float = screen_h / map_h
+	zoom_min = max(zoom_min, fit)
+	if zoom.x < zoom_min:
+		zoom = Vector2.ONE * zoom_min
