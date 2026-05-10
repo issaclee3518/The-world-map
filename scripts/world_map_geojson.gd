@@ -23,6 +23,8 @@ signal country_selected(country_name: String, iso_code: String)
 @export var country_border_color: Color = Color("0b1117")
 @export var country_border_width: float = 2.0
 
+@export var wrap_x: bool = false
+
 @export_range(0.0, 1.0, 0.01) var hover_lighten: float = 0.18
 
 @export var saturation: float = 0.55
@@ -117,8 +119,22 @@ func _draw_countries() -> void:
 
 
 func _draw_border() -> void:
-	var rect := Rect2(-map_size * 0.5, map_size)
-	draw_rect(rect, border_color, false, border_width)
+	if border_width <= 0.0:
+		return
+
+	var half := map_size * 0.5
+	var top_left := Vector2(-half.x, -half.y)
+	var top_right := Vector2(half.x, -half.y)
+	var bottom_left := Vector2(-half.x, half.y)
+	var bottom_right := Vector2(half.x, half.y)
+
+	# When wrapping horizontally, don't draw the left/right frame,
+	# otherwise the seam between repeated tiles becomes visible.
+	draw_line(top_left, top_right, border_color, border_width)
+	draw_line(bottom_left, bottom_right, border_color, border_width)
+	if not wrap_x:
+		draw_line(top_left, bottom_left, border_color, border_width)
+		draw_line(top_right, bottom_right, border_color, border_width)
 
 
 func _load_countries() -> void:

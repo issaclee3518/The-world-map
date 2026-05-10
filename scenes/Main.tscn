@@ -39,16 +39,19 @@ camera_path = NodePath("../Camera2D")
 [node name="WorldMap" type="Node2D" parent="MapRoot"]
 script = ExtResource("3_mapdraw")
 camera_path = NodePath("../../Camera2D")
+wrap_x = true
 
 [node name="WorldMapLeft" type="Node2D" parent="MapRoot"]
 script = ExtResource("3_mapdraw")
 enable_interaction = false
 camera_path = NodePath("../../Camera2D")
+wrap_x = true
 
 [node name="WorldMapRight" type="Node2D" parent="MapRoot"]
 script = ExtResource("3_mapdraw")
 enable_interaction = false
 camera_path = NodePath("../../Camera2D")
+wrap_x = true
 
 [node name="Camera2D" type="Camera2D" parent="." unique_id=870648709]
 script = ExtResource("2_lc3u0")

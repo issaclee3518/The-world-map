@@ -36,21 +36,24 @@ func _draw() -> void:
 		return
 
 	# Draw only within map height (no vertical infinite background),
-	# and repeat horizontally alongside the wrapped map.
+	# and cover the wrap horizontally *without seams* by drawing one wide strip.
 	var screen_w: float = vp.get_visible_rect().size.x
 	var half_w: float = (screen_w * 0.5) / max(z, 0.001) * overdraw_x_factor
 
 	var cam_x: float = _camera.global_position.x if _camera != null else 0.0
 	var base: float = round(cam_x / _map_w) * _map_w
 
+	# Expand by a couple of screen pixels in world units to avoid 1px gaps due to rounding.
+	var px_world: float = 1.0 / max(z, 0.001)
+	var overlap: float = 3.0 * px_world
+
 	var rect_h: float = _map_h
 	var rect_y: float = -_map_h * 0.5
 
-	# Center tile (clipped to visible width via limited overdraw)
-	draw_rect(Rect2(Vector2(base - half_w, rect_y), Vector2(half_w * 2.0, rect_h)), Color.WHITE, true)
-	# Left / Right tiles to cover across wrap boundary
-	draw_rect(Rect2(Vector2(base - _map_w - half_w, rect_y), Vector2(half_w * 2.0, rect_h)), Color.WHITE, true)
-	draw_rect(Rect2(Vector2(base + _map_w - half_w, rect_y), Vector2(half_w * 2.0, rect_h)), Color.WHITE, true)
+	# Width covers: left tile + center tile + right tile, plus overdraw.
+	var x0: float = base - _map_w - half_w - overlap
+	var x1: float = base + _map_w + half_w + overlap
+	draw_rect(Rect2(Vector2(x0, rect_y), Vector2(x1 - x0, rect_h)), Color.WHITE, true)
 
 
 func _resolve_camera() -> Camera2D:
