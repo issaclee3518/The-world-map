@@ -37,7 +37,7 @@ func _process(delta: float) -> void:
 		global_position += dir.normalized() * pan_speed * delta / zoom.x
 
 
-func _apply_zoom(multiplier: float, screen_pos: Vector2) -> void:
+func _apply_zoom(multiplier: float, _screen_pos: Vector2) -> void:
 	var old_zoom: float = zoom.x
 	var target: float = clamp(old_zoom * multiplier, zoom_min, zoom_max)
 	if is_equal_approx(target, old_zoom):

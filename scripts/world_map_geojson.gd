@@ -1,11 +1,16 @@
 extends Node2D
 
+signal country_selected(country_name: String, iso_code: String)
+
 @export var geojson_path: String = "res://assets/data/ne_110m_admin_0_countries.geojson"
 @export var map_size: Vector2 = Vector2(3840.0, 1920.0) # equirectangular canvas
 
 @export var camera_path: NodePath
 @export var focus_duration: float = 0.25
 @export var click_zoom_multiplier: float = 1.7
+
+@export var draw_ocean: bool = false
+@export var draw_grid: bool = false
 
 @export var ocean_color: Color = Color("1f2e3a")
 @export var grid_color: Color = Color("2f4657")
@@ -38,6 +43,7 @@ var _colors: Array[Color] = []
 var _base_colors: Array[Color] = []
 var _hovered: Array[bool] = []
 var _poly_country: Array[String] = []
+var _poly_iso: Array[String] = []
 
 var _label_countries: Array[String] = []
 var _label_pos: Array[Vector2] = []
@@ -57,8 +63,10 @@ func _ready() -> void:
 
 
 func _draw() -> void:
-	_draw_ocean()
-	_draw_grid()
+	if draw_ocean:
+		_draw_ocean()
+	if draw_grid:
+		_draw_grid()
 	_draw_countries()
 	_draw_labels()
 	_draw_border()
@@ -87,6 +95,11 @@ func _draw_countries() -> void:
 		var pts: PackedVector2Array = _polys[i]
 		if pts.size() < 3:
 			continue
+		# Self-intersecting or degenerate rings (e.g. antimeridian wraps) break ear-clipping.
+		if Geometry2D.triangulate_polygon(pts).is_empty():
+			if country_border_width > 0.0:
+				draw_polyline(pts, country_border_color, country_border_width, true)
+			continue
 		draw_colored_polygon(pts, _colors[i])
 		if country_border_width > 0.0:
 			draw_polyline(pts, country_border_color, country_border_width, true)
@@ -103,6 +116,7 @@ func _load_countries() -> void:
 	_base_colors.clear()
 	_hovered.clear()
 	_poly_country.clear()
+	_poly_iso.clear()
 	_label_countries.clear()
 	_label_pos.clear()
 	_label_area.clear()
@@ -115,15 +129,69 @@ func _load_countries() -> void:
 		for c in _hit_root.get_children():
 			c.queue_free()
 
-	if not FileAccess.file_exists(geojson_path):
-		push_error("GeoJSON not found: %s" % geojson_path)
+	if FileAccess.file_exists(geojson_path):
+		var json_text: String = FileAccess.get_file_as_string(geojson_path)
+		if not json_text.is_empty() and _apply_geojson_text(json_text):
+			return
+
+	# HTML5: GeoJSON is often omitted from the pack unless include_filter lists *.geojson —
+	# fetch the same path relative to index.html as a fallback.
+	if OS.has_feature("web"):
+		_load_countries_http_fallback()
 		return
 
-	var json_text: String = FileAccess.get_file_as_string(geojson_path)
+	push_error("GeoJSON not found or empty: %s" % geojson_path)
+
+
+func _geojson_http_url() -> String:
+	var rel: String = geojson_path.trim_prefix("res://")
+	if rel.is_empty():
+		return ""
+	if not Engine.has_singleton("JavaScriptBridge"):
+		return ""
+	var base: Variant = JavaScriptBridge.eval(
+		"window.location.href.slice(0, window.location.href.lastIndexOf('/') + 1)",
+		true,
+	)
+	if base == null:
+		return ""
+	return str(base) + rel
+
+
+func _load_countries_http_fallback() -> void:
+	var url: String = _geojson_http_url()
+	if url.is_empty():
+		push_error("Web: GeoJSON URL unresolved — add *.geojson to Export include filter, or enable JavaScriptBridge.")
+		return
+
+	var http: HTTPRequest = HTTPRequest.new()
+	add_child(http)
+	http.request_completed.connect(func(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+		http.queue_free()
+		if result != HTTPRequest.RESULT_SUCCESS:
+			push_error("Web GeoJSON download failed (network): %s" % result)
+			return
+		if response_code != 200:
+			push_error("Web GeoJSON HTTP %s — check export includes %s beside index.html or in PCK." % [response_code, geojson_path.get_file()])
+			return
+		var txt: String = body.get_string_from_utf8()
+		if _apply_geojson_text(txt):
+			queue_redraw()
+		else:
+			push_error("Web GeoJSON: parse error")
+	)
+
+	var err: Error = http.request(url)
+	if err != OK:
+		push_error("Web GeoJSON: cannot start request (%s)" % err)
+		http.queue_free()
+
+
+func _apply_geojson_text(json_text: String) -> bool:
 	var parsed_variant: Variant = JSON.parse_string(json_text)
 	if parsed_variant == null or typeof(parsed_variant) != TYPE_DICTIONARY:
-		push_error("Failed to parse GeoJSON: %s" % geojson_path)
-		return
+		push_error("Failed to parse GeoJSON text")
+		return false
 
 	var root: Dictionary = parsed_variant as Dictionary
 	var features: Array = root.get("features", [])
@@ -133,20 +201,22 @@ func _load_countries() -> void:
 
 		var feat: Dictionary = f
 		var props: Dictionary = feat.get("properties", {})
-		var name: String = str(props.get("NAME", props.get("ADMIN", "Country")))
-		var color: Color = _color_for_name(name)
+		var country_name: String = str(props.get("NAME", props.get("ADMIN", "Country")))
+		var iso_code: String = _iso_from_props(props)
+		var color: Color = _color_for_name(country_name)
 
 		var geom: Dictionary = feat.get("geometry", {})
 		var gtype: String = str(geom.get("type", ""))
 		var coords: Variant = geom.get("coordinates", null)
 
 		if gtype == "Polygon":
-			_add_polygon(name, coords, color)
+			_add_polygon(country_name, coords, color, iso_code)
 		elif gtype == "MultiPolygon":
-			_add_multipolygon(name, coords, color)
+			_add_multipolygon(country_name, coords, color, iso_code)
 
 	_build_country_buttons()
 	_build_country_labels()
+	return true
 
 
 func _draw_labels() -> void:
@@ -218,11 +288,11 @@ func _build_country_labels() -> void:
 
 	var n: int = _polys.size()
 	for i in range(n):
-		var name: String = _poly_country[i]
+		var ckey: String = _poly_country[i]
 		var a: float = absf(_polygon_area(_polys[i]))
-		if not best_area.has(name) or a > float(best_area[name]):
-			best_area[name] = a
-			best_idx[name] = i
+		if not best_area.has(ckey) or a > float(best_area[ckey]):
+			best_area[ckey] = a
+			best_idx[ckey] = i
 
 	var entries: Array[Dictionary] = []
 	for k in best_idx.keys():
@@ -279,14 +349,26 @@ func _build_country_buttons() -> void:
 		if pts.size() < 3:
 			continue
 
+		var tri_ix: PackedInt32Array = Geometry2D.triangulate_polygon(pts)
+		if tri_ix.is_empty():
+			continue
+
 		var area: Area2D = Area2D.new()
 		area.name = "CountryButton_%d" % i
 		area.input_pickable = true
 		_hit_root.add_child(area)
 
-		var col: CollisionPolygon2D = CollisionPolygon2D.new()
-		col.polygon = pts
-		area.add_child(col)
+		for t in range(0, tri_ix.size(), 3):
+			var tri: PackedVector2Array = PackedVector2Array([
+				pts[tri_ix[t]],
+				pts[tri_ix[t + 1]],
+				pts[tri_ix[t + 2]],
+			])
+			var convex: ConvexPolygonShape2D = ConvexPolygonShape2D.new()
+			convex.points = tri
+			var cshape: CollisionShape2D = CollisionShape2D.new()
+			cshape.shape = convex
+			area.add_child(cshape)
 
 		area.mouse_entered.connect(func() -> void:
 			_set_hover(i, true)
@@ -322,6 +404,8 @@ func _focus_country(i: int) -> void:
 
 	if i < 0 or i >= _polys.size():
 		return
+
+	country_selected.emit(_poly_country[i], _poly_iso[i])
 
 	var local_center: Vector2 = _polygon_centroid(_polys[i])
 	var target_pos: Vector2 = to_global(local_center)
@@ -379,7 +463,29 @@ func _polygon_centroid(pts: PackedVector2Array) -> Vector2:
 	return Vector2(cx / (6.0 * a), cy / (6.0 * a))
 
 
-func _add_polygon(name: String, coords: Variant, color: Color) -> void:
+func _iso_from_props(props: Dictionary) -> String:
+	# API expects 2-letter codes (e.g. kr, us). Natural Earth often has -99; use fallbacks.
+	for key in ["ISO_A2", "WB_A2", "ISO_A2_EH"]:
+		var raw: String = str(props.get(key, "")).strip_edges()
+		if raw.is_empty() or raw.begins_with("-"):
+			continue
+		if raw.length() == 2 and _is_iso2_letters(raw):
+			return raw.to_lower()
+	return ""
+
+
+func _is_iso2_letters(s: String) -> bool:
+	if s.length() != 2:
+		return false
+	var u: String = s.to_upper()
+	for i in 2:
+		var c: int = u.unicode_at(i)
+		if c < 65 or c > 90:
+			return false
+	return true
+
+
+func _add_polygon(country_name: String, coords: Variant, color: Color, iso_code: String) -> void:
 	# GeoJSON Polygon: [ [outer], [hole1], ... ]
 	if coords == null or typeof(coords) != TYPE_ARRAY:
 		return
@@ -390,16 +496,16 @@ func _add_polygon(name: String, coords: Variant, color: Color) -> void:
 	# MVP: draw outer ring only (ignore holes).
 	var outer: Variant = rings[0]
 	var pts: PackedVector2Array = _ring_to_points(outer)
-	_store_poly(name, pts, color)
+	_store_poly(country_name, pts, color, iso_code)
 
 
-func _add_multipolygon(name: String, coords: Variant, color: Color) -> void:
+func _add_multipolygon(country_name: String, coords: Variant, color: Color, iso_code: String) -> void:
 	# GeoJSON MultiPolygon: [ Polygon, Polygon, ... ]
 	if coords == null or typeof(coords) != TYPE_ARRAY:
 		return
 	var polys: Array = coords
 	for poly in polys:
-		_add_polygon(name, poly, color)
+		_add_polygon(country_name, poly, color, iso_code)
 
 
 func _ring_to_points(ring: Variant) -> PackedVector2Array:
@@ -424,13 +530,14 @@ func _ring_to_points(ring: Variant) -> PackedVector2Array:
 	return pts
 
 
-func _store_poly(name: String, pts: PackedVector2Array, color: Color) -> void:
+func _store_poly(country_name: String, pts: PackedVector2Array, color: Color, iso_code: String) -> void:
 	if pts.size() < 3:
 		return
 	_polys.append(pts)
 	_base_colors.append(color)
 	_colors.append(color)
-	_poly_country.append(name)
+	_poly_country.append(country_name)
+	_poly_iso.append(iso_code)
 
 
 func _lonlat_to_xy(lon: float, lat: float) -> Vector2:
@@ -440,7 +547,7 @@ func _lonlat_to_xy(lon: float, lat: float) -> Vector2:
 	return Vector2(x, y)
 
 
-func _color_for_name(name: String) -> Color:
-	var h: int = name.hash()
+func _color_for_name(country_name: String) -> Color:
+	var h: int = country_name.hash()
 	var hue: float = fposmod(float(h), 360.0) / 360.0
 	return Color.from_hsv(hue, clamp(saturation, 0.0, 1.0), clamp(value, 0.0, 1.0))
