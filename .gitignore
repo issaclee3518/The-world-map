@@ -6,7 +6,6 @@ export_preset.cfg
 
 # --- 가공된 바이너리 및 로그 ---
 *.log
-*.pck
 *.exe
 *.zip
 
