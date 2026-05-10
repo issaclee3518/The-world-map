@@ -19,7 +19,7 @@ var _touches: Dictionary = {} # id -> Vector2 (screen pos)
 var _pinching: bool = false
 var _pinch_start_dist: float = 0.0
 var _pinch_start_zoom: float = 1.0
-var _pinch_anchor_world: Vector2 = Vector2.ZERO
+var _pinch_anchor_screen: Vector2 = Vector2.ZERO
 
 
 func _ready() -> void:
@@ -50,8 +50,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			var dist: float = p0.distance_to(p1)
 			if _pinch_start_dist > 0.0 and dist > 0.0:
 				var ratio: float = dist / _pinch_start_dist
-				var target: float = clamp(_pinch_start_zoom / max(ratio, 0.001), zoom_min, zoom_max)
-				_set_zoom_anchored(target, _pinch_anchor_world)
+				# Spread (ratio > 1) => zoom in. Pinch (ratio < 1) => zoom out.
+				var target: float = clamp(_pinch_start_zoom * ratio, zoom_min, zoom_max)
+				_set_zoom_towards_screen_pos(target, _pinch_anchor_screen)
 			return
 
 		# 1-finger drag pan.
@@ -136,7 +137,7 @@ func _update_pinch_state() -> void:
 			_pinch_start_zoom = zoom.x
 			# Anchor zoom at midpoint in world space.
 			var mid: Vector2 = (p0 + p1) * 0.5
-			_pinch_anchor_world = _screen_to_world(mid)
+			_pinch_anchor_screen = mid
 	else:
 		_pinching = false
 		_pinch_start_dist = 0.0
@@ -158,18 +159,9 @@ func _screen_to_world(screen_pos: Vector2) -> Vector2:
 	return global_position + (screen_pos - center) / zoom.x
 
 
-func _set_zoom_anchored(target_zoom: float, anchor_world: Vector2) -> void:
-	var before: Vector2 = anchor_world
+func _set_zoom_towards_screen_pos(target_zoom: float, screen_pos: Vector2) -> void:
+	# Keep the world point under the screen_pos stable (same feel as mouse zoom).
+	var before: Vector2 = _screen_to_world(screen_pos)
 	zoom = Vector2.ONE * target_zoom
-	# Adjust camera so anchor stays under the same screen point.
-	var after: Vector2 = anchor_world
-	# Recompute global_position so that anchor_world maps to same screen point:
-	# We can do it by measuring anchor's screen pos before/after, but anchor_world is constant.
-	# Instead keep the current screen position of the anchor by shifting camera proportional to zoom change.
-	# Derivation: (anchor - cam) * zoom is invariant => cam' = anchor - (anchor - cam) * (zoom_old/zoom_new)
-	# Use zoom values scalar.
-	var old_z: float = _pinch_start_zoom if _pinching else zoom.x
-	var new_z: float = target_zoom
-	if new_z <= 0.0:
-		return
-	global_position = before - (before - global_position) * (old_z / new_z)
+	var after: Vector2 = _screen_to_world(screen_pos)
+	global_position += (before - after)
