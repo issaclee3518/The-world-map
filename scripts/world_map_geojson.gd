@@ -58,6 +58,12 @@ var _camera: Camera2D
 var _focus_tween: Tween
 var _font: Font
 
+# Click recognition (mobile friendly): only count as click on release,
+# and ignore if pointer moved (i.e., it was a drag/pan).
+@export var click_max_screen_move_px: float = 14.0
+var _pressed_screen_pos: Dictionary = {} # poly_index -> Vector2
+var _pressed_active: Dictionary = {} # poly_index -> bool
+
 static var _CACHE: Dictionary = {}
 
 
@@ -414,8 +420,25 @@ func _build_country_buttons() -> void:
 		area.input_event.connect(func(_viewport: Node, event: InputEvent, _shape_idx: int) -> void:
 			if event is InputEventMouseButton:
 				var mb: InputEventMouseButton = event as InputEventMouseButton
-				if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
-					_focus_country(i)
+				if mb.button_index != MOUSE_BUTTON_LEFT:
+					return
+
+				# Mobile touches are often emulated as mouse clicks; panning starts with a "press".
+				# Only treat it as a click if the press is released without moving much.
+				if mb.pressed:
+					_pressed_active[i] = true
+					_pressed_screen_pos[i] = mb.position
+					return
+				else:
+					if not bool(_pressed_active.get(i, false)):
+						return
+					_pressed_active[i] = false
+
+					var start_pos: Vector2 = _pressed_screen_pos.get(i, mb.position)
+					_pressed_screen_pos.erase(i)
+					var moved: float = start_pos.distance_to(mb.position)
+					if moved <= click_max_screen_move_px:
+						_focus_country(i)
 		)
 
 
